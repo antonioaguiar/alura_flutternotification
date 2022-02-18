@@ -4,12 +4,8 @@ class Device {
   String? model;
   String? token;
 
-  Device({
-    this.id,
-    required this.brand,
-    required this.model,
-    required this.token
-  });
+  Device(
+      {this.id, required this.brand, required this.model, required this.token});
 
   factory Device.fromJson(Map<String, dynamic> json) {
     return Device(
