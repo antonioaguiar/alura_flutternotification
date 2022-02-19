@@ -1,66 +1,111 @@
-import 'dart:io';
-
-import 'package:device_info_plus/device_info_plus.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:meetups/http/web.dart';
-import 'package:meetups/models/device.dart';
 import 'package:meetups/screens/events_screen.dart';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
+final navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
+  //iniciar o firebase e setar o token para a notificação
   WidgetsFlutterBinding.ensureInitialized();
-
   await Firebase.initializeApp();
+  FirebaseMessaging _messaging = FirebaseMessaging.instance;
 
-  FirebaseMessaging _message = FirebaseMessaging.instance;
+  //Solicitar autorização do usuário para uso de notificações
+  NotificationSettings _settings = await _messaging.requestPermission(
+    alert: true,
+    announcement: false,
+    badge: true,
+    carPlay: false,
+    criticalAlert: false,
+    provisional: false,
+    sound: true,
+  );
 
-  String? _token = await _message.getToken();
-
-  print("Token... $_token");
-  setPushToken(_token);
+  //verificar se o cara autorizou
+  if (_settings.authorizationStatus == AuthorizationStatus.authorized) {
+    print(
+        "Permissão para envio de notificações concedida\nStatus: ${_settings.authorizationStatus}");
+    _pushNotificationHandler(_messaging);
+  } else if (_settings.authorizationStatus == AuthorizationStatus.provisional) {
+    print(
+        "Permissão para envio provisório de notificações concedida\nStatus: ${_settings.authorizationStatus}");
+    _pushNotificationHandler(_messaging);
+  } else {
+    print(
+        "Permisão para notificação negada.\nStatus: ${_settings.authorizationStatus}");
+  }
 
   runApp(App());
 }
 
-void setPushToken(String? _token) async {
-  String? brand;
-  String? model;
+_pushNotificationHandler(FirebaseMessaging _messaging) async {
+  String? _token = await _messaging.getToken();
+  print("Token... $_token");
 
-  SharedPreferences _prefs = await SharedPreferences.getInstance();
-  String? prefToken = _prefs.getString("token") ?? "";
-  bool? isSentTo = _prefs.getBool("sentto") ?? false;
+  //guardar o token para que o servidor possa enviar notificação
+  setPushToken(_token);
 
-  if (prefToken != _token || isSentTo == false) {
-    DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
-
-    if (Platform.isAndroid) {
-      AndroidDeviceInfo androidInfo = await deviceInfo.androidInfo;
-      brand = androidInfo.brand ?? "";
-      model = androidInfo.model ?? "";
-
-      print("Device Android..: $model");
-    }
-    if (Platform.isIOS) {
-      IosDeviceInfo iosInfo = await deviceInfo.iosInfo;
-      brand = 'Apple';
-      model = iosInfo.utsname.machine ?? "";
-
-      print("Device Apple..: $model");
+  //foreground
+  //listener para capturar as mensagens recebidas enquanto o app estiver
+  //aberto em primeiro plano
+  FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+    if (message != null) {
+      print("Recebi a mensagem: ${message.data}");
+      String titulo = message.data["titulo"] ?? "";
+      String descricao = message.data["descricao"] ?? "";
+      showMessageDialog(titulo, descricao);
     }
 
-    Device device = new Device(brand: brand, model: model, token: _token);
-    sendDevice(device).then((value) {
-      if (value.statusCode == 200) {
-        isSentTo = true;
-      } else {
-        isSentTo = false;
-      }
-      _prefs.setBool("sentto", isSentTo ?? false);
-      _prefs.setString("token", _token ?? "");
-    });
+    if (message.notification != null) {
+      print("Que continha a notificação..:  ${message.notification!.body}");
+      String? titulo = message.notification!.title;
+      String? descricao = message.notification!.body!;
+      showMessageDialog(titulo!, descricao);
+    }
+  });
+
+  //Background
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+  //Terminated
+  RemoteMessage? notificacao =
+      await FirebaseMessaging.instance.getInitialMessage();
+  if (notificacao != null) {
+    if (notificacao.data[0].length > 0) {
+      showMessageDialog(notificacao.data[0], notificacao.data[1]);
+    }
   }
+}
+
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  print("Mensagem recebida em background\n${message.data}");
+  if (message.notification != null) {
+    print("Que continha a notificação..:  ${message.notification!.body}");
+  }
+}
+
+//tela para mostrar as notificações mas ainda não existe "context"
+//então vamos criar uma globalKey "navigatorKey" adicionar ao MaterialApp
+void showMessageDialog(String title, String message) {
+  Widget okButton = TextButton(
+    onPressed: () => Navigator.pop(navigatorKey.currentContext!),
+    child: Text("Ok"),
+  );
+
+  AlertDialog alerta = AlertDialog(
+    title: Text(title),
+    content: Text(message),
+    actions: [okButton],
+  );
+
+  showDialog(
+    context: navigatorKey.currentContext!,
+    builder: (BuildContext context) {
+      return alerta;
+    },
+  );
 }
 
 class App extends StatelessWidget {
@@ -70,6 +115,7 @@ class App extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Dev meetups',
       home: EventsScreen(),
+      navigatorKey: navigatorKey,
     );
   }
 }
